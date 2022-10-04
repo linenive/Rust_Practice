@@ -2,6 +2,7 @@ use std::io;
 use std::cmp::Ordering;
 use rand::Rng;
 use bevy::{prelude::*, text::Text2dBounds};
+use bevy::render::camera::RenderTarget;
 
 #[derive(Default)]
 struct Player {
@@ -15,12 +16,21 @@ struct Game {
 }
 
 #[derive(Component)]
+struct MainCamera;
+#[derive(Component)]
 struct AnimateTranslation;
 #[derive(Component)]
 struct AnimateRotation;
 #[derive(Component)]
 struct AnimateScale;
+#[derive(Component)]
+struct DebugConsole;
+#[derive(Component)]
+struct MouseClickEffect;
 
+const CLICK_EFFECT_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
+const MAIN_COLOR: Color = Color::rgb(1.0, 0.58, 0.27);
+const SUB_COLOR: Color = Color::rgb(0.82, 0.82, 0.45);
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMut<Game>) {
     let font = asset_server.load("fonts/Mabinogi_Classic_TTF.ttf");
@@ -32,7 +42,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
     let text_alignment = TextAlignment::CENTER;
 
     // 2d camera
-    commands.spawn_bundle(Camera2dBundle::default());
+    commands
+        .spawn_bundle(Camera2dBundle::default())
+        .insert(MainCamera);
 
     // Demonstrate changing translation
     commands
@@ -69,7 +81,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
         ..default()
     });
     commands.spawn_bundle(Text2dBundle {
-        text: Text::from_section("랄랄라랄라랄라랄랄 우왕 ㅋ", text_style),
+        text: Text::from_section("mouse position: ", text_style),
         text_2d_bounds: Text2dBounds {
             // Wrap text in the rectangle
             size: box_size,
@@ -83,7 +95,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
             1.0,
         ),
         ..default()
-    });
+    }).insert(DebugConsole);
 
     game.player.transform = Transform::from_translation(Vec3::new(200.0, 0.0, 200.0));
 
@@ -96,6 +108,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
             })
             .id(),
     );
+
+    commands
+        .spawn()
+        .insert(MouseClickEffect)
+        .insert_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::WHITE,
+                ..default()
+            },
+            transform: Transform {
+                scale: CLICK_EFFECT_SIZE,
+                ..default()
+            },
+            visibility: Visibility {
+                is_visible: false,
+            },
+            ..default()
+        });
 }
 
 fn main() {
@@ -108,6 +138,7 @@ fn main() {
         .add_system(animate_rotation)
         .add_system(animate_scale)
         .add_system(player_render)
+        .add_system(my_cursor_system)
         .run();
     println!("숫자를 맞춰보자!");
     
@@ -143,22 +174,84 @@ fn main() {
     
 }
 
+fn my_cursor_system(
+    // need to get window dimensions
+    wnds: Res<Windows>,
+    // query to get camera transform
+    q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    mouse_input: Res<Input<MouseButton>>,
+    mut query: Query<&mut Text, (With<Text>, With<DebugConsole>)>,
+    mut cursor_effect: Query<(&mut Transform, &mut Visibility), With<MouseClickEffect>>,
+) {
+    // get the camera info and transform
+    // assuming there is exactly one main camera entity, so query::single() is OK
+    let (camera, camera_transform) = q_camera.single();
+    let (mut effect_transform, mut effect_visibility) = cursor_effect.single_mut();
+
+    // get the window that the camera is displaying to (or the primary window)
+    let wnd = if let RenderTarget::Window(id) = camera.target {
+        wnds.get(id).unwrap()
+    } else {
+        wnds.get_primary().unwrap()
+    };
+
+    // check if the cursor is inside the window and get its position
+    if let Some(screen_pos) = wnd.cursor_position() {
+        // get the size of the window
+        let window_size = Vec2::new(wnd.width() as f32, wnd.height() as f32);
+
+        // convert screen position [0..resolution] to ndc [-1..1] (gpu coordinates)
+        let ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
+
+        // matrix for undoing the projection and camera transform
+        let ndc_to_world = camera_transform.compute_matrix() * camera.projection_matrix().inverse();
+
+        // use it to convert ndc to world-space coordinates
+        let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
+
+        // reduce it to a 2D value
+        let world_pos: Vec2 = world_pos.truncate();
+
+        for mut text in &mut query {
+            text.sections[0].value = format!("Mouse pos: ({},{})", world_pos.x, world_pos.y);
+        }
+
+        if mouse_input.pressed(MouseButton::Left) {
+            effect_transform.translation.x = world_pos.x;
+            effect_transform.translation.y = world_pos.y;
+            effect_visibility.is_visible = true;
+        }
+
+        if mouse_input.just_released(MouseButton::Left) {
+            effect_visibility.is_visible = false;
+        }
+    }
+}
+
 fn move_player(
     keyboard_input: Res<Input<KeyCode>>,
     mut game: ResMut<Game>,
 ) {
     if keyboard_input.pressed(KeyCode::W) {
-        game.player.transform.translation.z -= 0.8;
+        game.player.transform.translation.z -= 1.2;
     }
     if keyboard_input.pressed(KeyCode::S) {
-        game.player.transform.translation.z += 0.8;
+        game.player.transform.translation.z += 1.2;
     }
     if keyboard_input.pressed(KeyCode::A) {
-        game.player.transform.translation.x -= 0.8;
+        game.player.transform.translation.x -= 1.2;
     }
     if keyboard_input.pressed(KeyCode::D) {
-        game.player.transform.translation.x += 0.8;
+        game.player.transform.translation.x += 1.2;
     }
+}
+
+fn jump(
+    
+    mut game: ResMut<Game>,
+    tartget_pos: Vec2,
+) {
+    
 }
 
 fn animate_translation(
